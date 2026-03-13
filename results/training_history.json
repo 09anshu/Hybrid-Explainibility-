@@ -1,0 +1,146 @@
+{
+  "epochs": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "train_loss": [
+    0.553974,
+    0.459156,
+    0.39747,
+    0.352986,
+    0.299928,
+    0.270387,
+    0.262518,
+    0.239074,
+    0.21634,
+    0.214712
+  ],
+  "val_loss": [
+    0.514439,
+    0.449353,
+    0.406896,
+    0.341132,
+    0.312145,
+    0.301625,
+    0.277054,
+    0.27797,
+    0.261549,
+    0.256293
+  ],
+  "mean_auc": [
+    0.561725,
+    0.626802,
+    0.685474,
+    0.713895,
+    0.749856,
+    0.77582,
+    0.780572,
+    0.803424,
+    0.803236,
+    0.827309
+  ],
+  "per_class_auc": [
+    {
+      "Atelectasis": 0.544523,
+      "Cardiomegaly": 0.537997,
+      "Consolidation": 0.500457,
+      "Edema": 0.556895,
+      "Pleural Effusion": 0.55272
+    },
+    {
+      "Atelectasis": 0.585002,
+      "Cardiomegaly": 0.612561,
+      "Consolidation": 0.634164,
+      "Edema": 0.612685,
+      "Pleural Effusion": 0.606823
+    },
+    {
+      "Atelectasis": 0.627802,
+      "Cardiomegaly": 0.607542,
+      "Consolidation": 0.636061,
+      "Edema": 0.740862,
+      "Pleural Effusion": 0.713451
+    },
+    {
+      "Atelectasis": 0.636478,
+      "Cardiomegaly": 0.63251,
+      "Consolidation": 0.674542,
+      "Edema": 0.783423,
+      "Pleural Effusion": 0.748613
+    },
+    {
+      "Atelectasis": 0.670615,
+      "Cardiomegaly": 0.656631,
+      "Consolidation": 0.719345,
+      "Edema": 0.819569,
+      "Pleural Effusion": 0.785269
+    },
+    {
+      "Atelectasis": 0.679772,
+      "Cardiomegaly": 0.64308,
+      "Consolidation": 0.725568,
+      "Edema": 0.845169,
+      "Pleural Effusion": 0.80293
+    },
+    {
+      "Atelectasis": 0.690905,
+      "Cardiomegaly": 0.664619,
+      "Consolidation": 0.736233,
+      "Edema": 0.880049,
+      "Pleural Effusion": 0.849113
+    },
+    {
+      "Atelectasis": 0.707711,
+      "Cardiomegaly": 0.674458,
+      "Consolidation": 0.7306,
+      "Edema": 0.854755,
+      "Pleural Effusion": 0.846366
+    },
+    {
+      "Atelectasis": 0.710257,
+      "Cardiomegaly": 0.680007,
+      "Consolidation": 0.731448,
+      "Edema": 0.905816,
+      "Pleural Effusion": 0.856738
+    },
+    {
+      "Atelectasis": 0.720373,
+      "Cardiomegaly": 0.693303,
+      "Consolidation": 0.755767,
+      "Edema": 0.915226,
+      "Pleural Effusion": 0.877826
+    }
+  ],
+  "lr": [
+    0.0001,
+    9.758e-05,
+    9.055e-05,
+    7.96e-05,
+    6.58e-05,
+    5.05e-05,
+    3.52e-05,
+    2.14e-05,
+    1.045e-05,
+    3.42e-06
+  ],
+  "phase": [
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)",
+    "Phase 1 \u2014 Pre-training (CheXpert 5-label)"
+  ]
+}

@@ -1,0 +1,18 @@
+# Python cache and environments
+__pycache__/
+*.py[cod]
+*.so
+venv/
+.env
+
+# Large datasets and generated artifacts
+train/
+valid/
+phase_3/
+*.pth
+*.pt
+gradcam_output.jpg
+
+# Notebook and editor noise
+.ipynb_checkpoints/
+.vscode/
