@@ -11,7 +11,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from torchvision import transforms
 from dotenv import load_dotenv
-from model import get_densenet121_model, COMPETITION_LABELS
+from model import get_densenet121_model, COMPETITION_LABELS, SPECIALIZED_LABELS, load_backbone_weights
 from gradcam_utils import get_gradcam_heatmap
 from llm_explainer import get_diagnosis_verdicts, format_system_prompt, get_gemini_chain
 
@@ -132,24 +132,28 @@ def load_cached_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = get_densenet121_model(pretrained=False)
     weight_file = None
+    load_note  = ""
     for w in ['best_densenet121.pth',
               'best_densenet121_phase2.pth',
               'best_densenet121_phase1.pth',
               'best_resnet50.pth']:
         if os.path.exists(w):
             try:
-                model.load_state_dict(
-                    torch.load(w, map_location=device, weights_only=True)
-                )
+                model, mode = load_backbone_weights(model, w, device=device)
                 weight_file = w
+                if mode == 'backbone-only':
+                    load_note = (
+                        f"⚠️ Loaded backbone from **{w}** (legacy 5-class weights — "
+                        "classifier head randomly initialized; retrain for full 7-label accuracy)"
+                    )
                 break
             except Exception:
                 continue
     model.to(device)
     model.eval()
-    return model, device, weight_file
+    return model, device, weight_file, load_note
 
-model, device, _weight_file = load_cached_model()
+model, device, _weight_file, _load_note = load_cached_model()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -184,6 +188,7 @@ _history = load_training_history()
 _stanford = {
     "Atelectasis": 0.858, "Cardiomegaly": 0.832,
     "Consolidation": 0.899, "Edema": 0.924, "Pleural Effusion": 0.968,
+    "Pneumothorax": 0.943,
 }
 
 
@@ -207,8 +212,52 @@ def _metrics_source():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  SESSION STATE INIT
-# ══════════════════════════════════════════════════════════════════════════
+#  TTA INFERENCE (Test-Time Augmentation)
+# ════════════════════════════════════════════════════════════════════════════
+_TTA_TRANSFORMS = [
+    # Original
+    transforms.Compose([
+        transforms.Resize((320, 320)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ]),
+    # Horizontal flip
+    transforms.Compose([
+        transforms.Resize((320, 320)),
+        transforms.RandomHorizontalFlip(p=1.0),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ]),
+    # Slight clockwise rotation
+    transforms.Compose([
+        transforms.Resize((340, 340)),
+        transforms.CenterCrop(320),
+        transforms.RandomRotation(degrees=(5, 5)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ]),
+    # Slight counter-clockwise rotation
+    transforms.Compose([
+        transforms.Resize((340, 340)),
+        transforms.CenterCrop(320),
+        transforms.RandomRotation(degrees=(-5, -5)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ]),
+]
+
+
+def predict_with_tta(image_pil, mdl, dev):
+    """Run 4-augmentation TTA and return averaged sigmoid probabilities."""
+    probs_list = []
+    with torch.no_grad():
+        for tf in _TTA_TRANSFORMS:
+            x = tf(image_pil).unsqueeze(0).to(dev)
+            logits = mdl(x)
+            probs_list.append(torch.sigmoid(logits)[0].cpu().numpy())
+    return np.mean(probs_list, axis=0)
+
+
 for key, default in [
     ("conversation", None),
     ("chat_history", []),
@@ -226,11 +275,15 @@ st.markdown("""
     <h1>🫁 Radiology AI Explainer</h1>
     <p>
         Powered by <strong>DenseNet121</strong> trained on CheXpert &mdash;
-        detects <strong>5 chest pathologies</strong> with Grad-CAM++ visual explanations
+        detects <strong>7 thoracic findings</strong> including
+        <strong>Pneumothorax</strong> and <strong>Fracture</strong> with Grad-CAM++ visual explanations
         and <strong>Google Gemini</strong> AI discussion.
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+if _load_note:
+    st.warning(_load_note)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -272,18 +325,15 @@ with tab_scan:
             analyse_btn = st.button("🔍  Analyze Image", use_container_width=True, type="primary")
 
         if analyse_btn:
-            with st.spinner("Running DenseNet121 inference…"):
-                transform = transforms.Compose([
+            with st.spinner("Running DenseNet121 inference with 4-view TTA on GPU…"):
+                base_transform = transforms.Compose([
                     transforms.Resize((320, 320)),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
                 ])
-                input_tensor = transform(image).unsqueeze(0).to(device)
-
-                with torch.no_grad():
-                    output_logits = model(input_tensor)
-                    probabilities = torch.sigmoid(output_logits)[0].cpu().numpy()
+                input_tensor = base_transform(image).unsqueeze(0).to(device)
+                probabilities = predict_with_tta(image, model, device)
 
                 preds = {
                     label: float(prob)
@@ -302,6 +352,20 @@ with tab_scan:
 
             st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
             st.markdown("### 🩺 Diagnosis Results")
+            st.caption("Inference mode: 4-view Test-Time Augmentation (TTA) averaged on GPU.")
+
+            # Specialized alerts first (project goal)
+            st.markdown("#### 🚨 Specialized Detection Alerts")
+            sp1, sp2 = st.columns(2)
+            for col, label in zip((sp1, sp2), SPECIALIZED_LABELS):
+                prob = preds.get(label, 0.0)
+                with col:
+                    if prob >= 0.5:
+                        st.error(f"{label}: {prob:.1%} (HIGH)")
+                    elif prob >= 0.25:
+                        st.warning(f"{label}: {prob:.1%} (MODERATE)")
+                    else:
+                        st.success(f"{label}: {prob:.1%} (LOW)")
 
             # Risk cards row
             risk_cols = st.columns(len(COMPETITION_LABELS))
@@ -473,6 +537,7 @@ with tab_perf:
         # ···· AUC Table ···········································
         with perf_tab1:
             rows = []
+            compare_labels = [l for l in COMPETITION_LABELS if _stanford.get(l, None) is not None]
             for lbl in COMPETITION_LABELS:
                 our = auc_cls.get(lbl, float('nan'))
                 ref = _stanford.get(lbl, float('nan'))
@@ -484,22 +549,26 @@ with tab_perf:
                     'Stanford AUC': f"{ref:.4f}" if not np.isnan(ref) else "n/a",
                     'Gap': f"{gap:+.4f}" if not np.isnan(gap) else "n/a",
                 })
+            mean_ref = np.mean([_stanford[l] for l in compare_labels]) if compare_labels else float('nan')
+            mean_ours_cmp = np.mean([auc_cls.get(l, float('nan')) for l in compare_labels]) if compare_labels else float('nan')
+            mean_gap_cmp = mean_ours_cmp - mean_ref if not (np.isnan(mean_ours_cmp) or np.isnan(mean_ref)) else float('nan')
             rows.append({
-                'Pathology': '**Mean (5 labels)**',
+                'Pathology': '**Mean (Stanford-comparable labels)**',
                 'Our AUC': f"**{mean_auc:.4f}**",
-                'Stanford AUC': f"**{np.mean(list(_stanford.values())):.4f}**",
-                'Gap': f"**{mean_auc - np.mean(list(_stanford.values())):+.4f}**",
+                'Stanford AUC': f"**{mean_ref:.4f}**" if not np.isnan(mean_ref) else "**n/a**",
+                'Gap': f"**{mean_gap_cmp:+.4f}**" if not np.isnan(mean_gap_cmp) else "**n/a**",
             })
             st.table(pd.DataFrame(rows))
             st.caption("Stanford baseline: Irvin et al. 2019 — DenseNet121 ensemble on CheXpert.")
 
         # ···· Bar Chart ···········································
         with perf_tab2:
+            compare_labels = [l for l in COMPETITION_LABELS if _stanford.get(l, None) is not None]
             fig, ax = plt.subplots(figsize=(10, 5))
-            x = np.arange(len(COMPETITION_LABELS))
+            x = np.arange(len(compare_labels))
             w = 0.35
-            ours = [auc_cls.get(l, 0) for l in COMPETITION_LABELS]
-            refs = [_stanford.get(l, 0) for l in COMPETITION_LABELS]
+            ours = [auc_cls.get(l, 0) for l in compare_labels]
+            refs = [_stanford.get(l, 0) for l in compare_labels]
 
             b1 = ax.bar(x - w/2, ours, w, label='Ours', color='#4fc3f7', edgecolor='white')
             b2 = ax.bar(x + w/2, refs, w, label='Stanford', color='#7e57c2',
@@ -508,7 +577,7 @@ with tab_perf:
             ax.set_ylabel('AUC Score')
             ax.set_title('Per-Class AUC — Ours vs Stanford Baseline')
             ax.set_xticks(x)
-            ax.set_xticklabels(COMPETITION_LABELS, fontsize=10)
+            ax.set_xticklabels(compare_labels, fontsize=10)
             ax.set_ylim(0, 1.08)
             ax.legend()
             ax.grid(axis='y', alpha=.25)
@@ -530,9 +599,10 @@ with tab_perf:
 
         # ···· Radar Chart ·········································
         with perf_tab3:
-            labels_r = COMPETITION_LABELS + [COMPETITION_LABELS[0]]
-            our_r = [auc_cls.get(l, 0) for l in COMPETITION_LABELS] + [auc_cls.get(COMPETITION_LABELS[0], 0)]
-            ref_r = [_stanford.get(l, 0) for l in COMPETITION_LABELS] + [_stanford.get(COMPETITION_LABELS[0], 0)]
+            compare_labels = [l for l in COMPETITION_LABELS if _stanford.get(l, None) is not None]
+            labels_r = compare_labels + [compare_labels[0]]
+            our_r = [auc_cls.get(l, 0) for l in compare_labels] + [auc_cls.get(compare_labels[0], 0)]
+            ref_r = [_stanford.get(l, 0) for l in compare_labels] + [_stanford.get(compare_labels[0], 0)]
             angles = np.linspace(0, 2 * np.pi, len(labels_r), endpoint=True)
 
             fig2, ax2 = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
@@ -540,7 +610,7 @@ with tab_perf:
             ax2.fill(angles, our_r, alpha=.15, color='#4fc3f7')
             ax2.plot(angles, ref_r, 's--', color='#7e57c2', linewidth=2, label='Stanford')
             ax2.fill(angles, ref_r, alpha=.10, color='#7e57c2')
-            ax2.set_thetagrids(angles[:-1] * 180 / np.pi, COMPETITION_LABELS, fontsize=10)
+            ax2.set_thetagrids(angles[:-1] * 180 / np.pi, compare_labels, fontsize=10)
             ax2.set_ylim(0, 1.05)
             ax2.set_rlabel_position(30)
             ax2.legend(loc='lower right', fontsize=10)
@@ -703,20 +773,22 @@ with tab_perf:
                 st.markdown("""
                 **Model Architecture**
                 - Backbone: DenseNet121 (ImageNet pre-trained)
-                - Head: Linear(1024 → 5)
+                - Head: Linear(1024 → 7)
                 - Input: 320×320 RGB
-                - Output: 5 pathology probabilities (sigmoid)
-                - Loss: Masked BCE with class-balanced pos_weight
+                - Output: 7 pathology probabilities (sigmoid)
+                - Specialized targets: Pneumothorax + Fracture
+                - Loss: Masked BCE + label smoothing + class-balanced pos_weight
                 """)
             with cfg2:
                 st.markdown("""
                 **Training Setup**
-                - Phase 1: CheXpert 5-label pre-training (10 epochs)
+                - Phase 1: CheXpert 7-label pre-training (20 epochs)
                 - Optimizer: Adam (lr=1e-4, weight_decay=1e-5)
                 - Scheduler: CosineAnnealingLR
                 - Batch size: 8 × 4 grad-accum = 32 effective
+                - Inference: 4-view TTA averaging
                 - Validation: 234 radiologist-labelled CheXpert images
-                - Primary Metric: Mean AUC over 5 competition labels
+                - Primary Metric: Mean AUC over valid labels
                 """)
 
 
@@ -730,7 +802,7 @@ with tab_about:
         st.markdown("### What does this app do?")
         st.markdown("""
         This tool helps **medical professionals and students** quickly screen
-        chest X-rays for five common thoracic pathologies:
+        chest X-rays for seven thoracic findings, including specialized trauma flags:
 
         | # | Pathology | What it is |
         |---|-----------|------------|
@@ -739,6 +811,8 @@ with tab_about:
         | 3 | **Consolidation** | Lung tissue filled with fluid / pus |
         | 4 | **Edema** | Excess fluid in the lungs |
         | 5 | **Pleural Effusion** | Fluid between lung and chest wall |
+        | 6 | **Pneumothorax** | Air in pleural space (urgent finding) |
+        | 7 | **Fracture** | Rib/vertebral fracture patterns |
         """)
 
         st.markdown("### How it works")

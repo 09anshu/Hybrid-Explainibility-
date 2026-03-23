@@ -32,10 +32,10 @@ import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, ConcatDataset
 from torchvision import transforms
 
-from model import COMPETITION_LABELS  # ['Atelectasis','Cardiomegaly','Consolidation','Edema','Pleural Effusion']
+from model import COMPETITION_LABELS  # 7-label: 5 CheXpert + Pneumothorax + Fracture
 
 # ════════════════════════════════════════════════════════════════════════════
-#  UNCERTAINTY POLICIES  (Irvin et al. 2019, Table 4 — "diff" policy)
+#  UNCERTAINTY POLICIES  (Irvin et al. 2019, Table 4 + extensions)
 # ════════════════════════════════════════════════════════════════════════════
 # For each label: how to handle value -1 (uncertain)?
 #   1  → U-Ones  (uncertain treated as positive)
@@ -46,22 +46,27 @@ U_POLICY = {
     "Consolidation":    0,   # U-Zeros — preserves specificity; most uncertain = normal
     "Edema":            1,   # U-Ones
     "Pleural Effusion": 1,   # U-Ones
+    "Pneumothorax":     0,   # U-Zeros — true PTX is usually clear; uncertain = absent
+    "Fracture":         1,   # U-Ones  — subtle fractures are easily missed; uncertain = present
 }
 
-# NIH ChestX-ray14 label → CheXpert label mapping
+# NIH ChestX-ray14 label → CheXpert label mapping (NIH has Pneumothorax, not Fracture)
 NIH_TO_CHEXPERT = {
-    "Atelectasis":  "Atelectasis",
-    "Cardiomegaly": "Cardiomegaly",
+    "Atelectasis":   "Atelectasis",
+    "Cardiomegaly":  "Cardiomegaly",
     "Consolidation": "Consolidation",
-    "Edema":        "Edema",
-    "Effusion":     "Pleural Effusion",   # NIH uses "Effusion" for pleural effusion
+    "Edema":         "Edema",
+    "Effusion":      "Pleural Effusion",  # NIH uses "Effusion"
+    "Pneumothorax":  "Pneumothorax",      # Direct match — NIH annotates PTX
 }
 
-# Masks per dataset type — which of the 5 labels are annotated
-MASK_CHEXPERT = [1, 1, 1, 1, 1]         # All 5 known
-MASK_NIH      = [1, 1, 1, 1, 1]         # All 5 mapped
-MASK_RSNA     = [1, 0, 1, 0, 0]         # Atelectasis + Consolidation (pneumonia proxy)
-MASK_KAGGLE   = [1, 0, 1, 0, 0]         # Same proxy
+# Masks per dataset — which of the 7 labels are annotated
+#  Index:       0  1  2  3  4   5   6
+#  Label:      At Ca Co Ed PE  PTX Fra
+MASK_CHEXPERT = [1, 1, 1, 1, 1,  1,  1]  # CheXpert annotates all 7
+MASK_NIH      = [1, 1, 1, 1, 1,  1,  0]  # NIH has no Fracture annotations
+MASK_RSNA     = [1, 0, 1, 0, 0,  0,  0]  # Atelectasis + Consolidation (pneumonia proxy)
+MASK_KAGGLE   = [1, 0, 1, 0, 0,  0,  0]  # Same proxy
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -77,24 +82,27 @@ IMG_SIZE = 320
 # ════════════════════════════════════════════════════════════════════════════
 
 def get_train_transform():
-    """Augmented transform for training — CheXpert paper augmentation + extras.
+    """Stronger augmentation pipeline targeting CXR variability + rib/PTX detection.
 
-    Augmentation rationale (survey: PMC11355845):
-      RandomHorizontalFlip  — CXR laterality invariant augmentation
-      RandomRotation        — mimics slight patient positioning variance
-      RandomAffine          — slight translation robustness (dataset bias mitigation)
-      ColorJitter           — scanner contrast/brightness variation
+    Improvements over baseline:
+      RandomRotation ±15°  — broader patient positioning variance (helps rib fractures)
+      RandomAffine scale   — mild zoom-in/out (lesion-size invariance)
+      GaussianBlur         — scanner sharpness variability; helps generalization
+      RandomErasing        — simulates lead markers / body-part occlusion
+      Increased ColorJitter — wider scanner contrast/brightness range
     """
     return transforms.Compose([
-        transforms.Resize((IMG_SIZE + 20, IMG_SIZE + 20)),
+        transforms.Resize((IMG_SIZE + 32, IMG_SIZE + 32)),
         transforms.RandomCrop(IMG_SIZE),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(degrees=10),
-        transforms.RandomAffine(degrees=0, translate=(0.05, 0.05)),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+        transforms.RandomRotation(degrees=15),
+        transforms.RandomAffine(degrees=0, translate=(0.07, 0.07), scale=(0.90, 1.10)),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.1, hue=0.02),
+        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225]),
+        transforms.RandomErasing(p=0.10, scale=(0.01, 0.04), ratio=(0.5, 2.0), value=0),
     ])
 
 

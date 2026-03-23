@@ -9,6 +9,8 @@ venv/
 train/
 valid/
 phase_3/
+pneumo_masks/
+pneumo masks/
 *.pth
 *.pt
 gradcam_output.jpg

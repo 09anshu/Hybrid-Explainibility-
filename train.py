@@ -52,20 +52,30 @@ torch.backends.cudnn.benchmark = True   # Tune convolutions for fixed input size
 
 class MaskedBCEWithLogitsLoss(nn.Module):
     """
-    BCEWithLogitsLoss that ignores label positions where mask == 0.
+    BCEWithLogitsLoss that ignores label positions where mask == 0,
+    with optional label smoothing (Müller et al. 2019).
 
     Forward:
       logits  : [B, C]
       targets : [B, C]  — float, 0.0 or 1.0
       masks   : [B, C]  — float, 1.0 = labelled, 0.0 = unknown
 
-    A pos_weight tensor [C] is applied only to labelled entries.
+    label_smoothing ε:
+      Soft targets: 1 → 1-ε,  0 → ε.
+      Prevents overconfident sigmoid saturation; particularly helpful when
+      training on uncertain/noisy CheXpert labels.
     """
-    def __init__(self, pos_weight=None):
+    def __init__(self, pos_weight=None, label_smoothing=0.0):
         super().__init__()
-        self.pos_weight = pos_weight  # [C] tensor or None
+        self.pos_weight     = pos_weight
+        self.label_smoothing = label_smoothing
 
     def forward(self, logits, targets, masks):
+        # Apply label smoothing
+        if self.label_smoothing > 0.0:
+            eps = self.label_smoothing
+            targets = targets * (1.0 - 2 * eps) + eps
+
         # Element-wise BCE (no reduction)
         if self.pos_weight is not None:
             pw = self.pos_weight.to(logits.device)
@@ -96,7 +106,24 @@ def load_checkpoint(filepath, model, optimizer=None, scheduler=None):
     if not os.path.exists(filepath):
         return 0, 0.0
     ckpt = torch.load(filepath, map_location=DEVICE, weights_only=False)
-    model.load_state_dict(ckpt['model_state'])
+    resumed = True
+    try:
+        model.load_state_dict(ckpt['model_state'])
+    except RuntimeError:
+        # Classifier size mismatch (e.g. 5-label ckpt -> 7-label model):
+        # load backbone only and restart epoch/lr states.
+        partial = {
+            k: v for k, v in ckpt['model_state'].items()
+            if not k.startswith('classifier')
+        }
+        model.load_state_dict(partial, strict=False)
+        resumed = False
+        print("  [Checkpoint] Loaded backbone-only from legacy checkpoint; "
+              "classifier head reinitialized for current label set.")
+
+    if not resumed:
+        return 0, 0.0
+
     if optimizer and 'optimizer_state' in ckpt:
         optimizer.load_state_dict(ckpt['optimizer_state'])
     if scheduler and 'scheduler_state' in ckpt:
@@ -114,14 +141,14 @@ def load_checkpoint(filepath, model, optimizer=None, scheduler=None):
 
 def train_one_epoch(model, loader, criterion, optimizer, grad_accum_steps=4):
     """
-    Train for one epoch with gradient accumulation.
+    Train for one epoch with gradient accumulation and gradient clipping.
 
     grad_accum_steps: accumulate gradients over N mini-batches before stepping.
     Effective batch size = loader.batch_size × grad_accum_steps = 8 × 4 = 32.
 
-    NOTE: AMP (fp16) disabled — DenseNet121's dense concatenation paths
-    overflow fp16 range, producing NaN.  fp32 fits fine on GTX 1650
-    (2.2 GB peak at batch=8, 320×320).
+    Gradient clipping (max_norm=1.0) prevents rare exploding-gradient spikes
+    that otherwise stall training when Fracture / Pneumothorax labels appear in
+    very imbalanced mini-batches.
     """
     model.train()
     total_loss = 0.0
@@ -139,6 +166,7 @@ def train_one_epoch(model, loader, criterion, optimizer, grad_accum_steps=4):
         loss.backward()
 
         if (step + 1) % grad_accum_steps == 0 or (step + 1) == len(loader):
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             optimizer.zero_grad()
 
@@ -240,7 +268,7 @@ def run_phase(
     print(f"  Grad accum steps : {grad_accum_steps}  "
           f"(effective batch = {train_loader.batch_size * grad_accum_steps})")
 
-    criterion = MaskedBCEWithLogitsLoss(pos_weight=pos_weight)
+    criterion = MaskedBCEWithLogitsLoss(pos_weight=pos_weight, label_smoothing=0.1)
 
     if freeze_backbone:
         for param in model.features.parameters():
@@ -346,9 +374,9 @@ def phase1_pretrain(
     mimic_records_csv  = None,
     mimic_img_root     = None,
     frontal_only       = True,
-    u_label_soft       = False,      # MLMIP soft uncertainty labels (Uniform[0.55,0.85])
+    u_label_soft       = True,       # MLMIP soft uncertainty labels — enabled by default
     batch_size         = 8,          # GTX 1650 safe with AMP
-    epochs             = 10,
+    epochs             = 21,         # run one extra epoch beyond 20
     lr                 = 1e-4,
     num_workers        = 4,
     grad_accum_steps   = 4,          # effective batch = 32
@@ -369,7 +397,7 @@ def phase1_pretrain(
     )
     model = get_densenet121_model(pretrained=True).to(DEVICE)
     return run_phase(
-        phase_name        = "Phase 1 — Pre-training (CheXpert 5-label)",
+        phase_name        = "Phase 1 — Pre-training (CheXpert 7-label)",
         model             = model,
         train_loader      = train_loader,
         val_loader        = val_loader,
@@ -475,6 +503,14 @@ def phase3_final_tune(
 # ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    # Enforce GPU training for consistent high-AUC runs.
+    if DEVICE.type != "cuda":
+        raise RuntimeError(
+            "CUDA GPU not available. Training is configured to run on GPU only. "
+            "Enable CUDA and retry."
+        )
+    print(f"[Device] Using GPU: {torch.cuda.get_device_name(0)}")
+
     # Hardware-safe defaults for GTX 1650 (4 GB VRAM)
     phase1_pretrain(
         chexpert_train_csv = 'train.csv',
@@ -482,7 +518,7 @@ if __name__ == "__main__":
         chexpert_root      = '.',
         frontal_only       = True,
         batch_size         = 8,
-        epochs             = 10,
+        epochs             = 21,
         lr                 = 1e-4,
         num_workers        = 4,
         grad_accum_steps   = 4,

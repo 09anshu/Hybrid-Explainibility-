@@ -12,7 +12,7 @@ Usage
   python evaluate.py --weights best_densenet121.pth --save_dir results/
 
 Outputs (saved to --save_dir, default: results/):
-  roc_curves.png         — ROC curve for each of the 5 competition labels
+    roc_curves.png         — ROC curve for each available label (7-label layout)
   precision_recall.png   — Precision-recall curves
   confusion_matrices.png — Confusion matrix per label (threshold 0.5)
   auc_report.txt         — Plain-text AUC summary
@@ -37,7 +37,7 @@ from PIL import Image
 import pandas as pd
 from tqdm import tqdm
 
-from model   import get_densenet121_model, COMPETITION_LABELS
+from model   import get_densenet121_model, COMPETITION_LABELS, load_backbone_weights
 from dataset import get_val_transform, U_POLICY, ChexpertDataset
 from torch.utils.data import DataLoader
 
@@ -60,9 +60,8 @@ def evaluate(
     # ── Load model ────────────────────────────────────────────────────────
     model = get_densenet121_model(pretrained=False).to(device)
     if os.path.exists(weights_path):
-        state = torch.load(weights_path, map_location=device, weights_only=True)
-        model.load_state_dict(state)
-        print(f"Loaded weights: {weights_path}")
+        model, load_mode = load_backbone_weights(model, weights_path, device=device)
+        print(f"Loaded weights: {weights_path}  (mode: {load_mode})")
     else:
         print(f"WARNING: weights file {weights_path!r} not found — using random init.")
     model.eval()
@@ -89,51 +88,64 @@ def evaluate(
             all_preds.append(probs)
             all_targets.append(labels.numpy())
 
-    preds   = np.concatenate(all_preds,   axis=0)   # [N, 5]
-    targets = np.concatenate(all_targets, axis=0)   # [N, 5]
+    preds   = np.concatenate(all_preds,   axis=0)   # [N, C]
+    targets = np.concatenate(all_targets, axis=0)   # [N, C]
 
     # ── Per-class AUC ─────────────────────────────────────────────────────
     auc_scores = {}
-    print("\n" + "="*55)
-    print("  CheXpert Competition Labels — AUC on Official Val Set")
-    print("="*55)
-    print(f"  {'Label':25s}  {'AUC':>6}  {'AP':>6}")
-    print("-"*55)
+    n_labels = len(COMPETITION_LABELS)
+    print("\n" + "="*65)
+    print("  7-Label AUC on CheXpert Official Validation Set")
+    print("="*65)
+    print(f"  {'Label':25s}  {'AUC':>6}  {'AP':>6}  {'Note'}")
+    print("-"*65)
     for i, label in enumerate(COMPETITION_LABELS):
         y_true = targets[:, i]
         y_score = preds[:, i]
         if len(np.unique(y_true)) < 2 or np.any(np.isnan(y_score)):
             auc_scores[label] = float('nan')
-            reason = "single class" if len(np.unique(y_true)) < 2 else "NaN in preds"
+            reason = "no positives in val set" if len(np.unique(y_true)) < 2 else "NaN in preds"
             print(f"  {label:25s}  {'n/a':>6}  {'n/a':>6}  ({reason})")
             continue
         auc = roc_auc_score(y_true, y_score)
         ap  = average_precision_score(y_true, y_score)
         auc_scores[label] = auc
-        print(f"  {label:25s}  {auc:.4f}  {ap:.4f}")
+        flag = " ← SPECIALIZED" if label in ("Pneumothorax", "Fracture") else ""
+        print(f"  {label:25s}  {auc:.4f}  {ap:.4f}{flag}")
 
     valid_aucs = [v for v in auc_scores.values() if not np.isnan(v)]
     mean_auc   = np.mean(valid_aucs) if valid_aucs else 0.0
-    print("-"*55)
-    print(f"  {'Mean AUC (5 labels)':25s}  {mean_auc:.4f}")
-    print("="*55)
+    print("-"*65)
+    print(f"  {'Mean AUC (valid labels)':25s}  {mean_auc:.4f}")
+    print("="*65)
 
-    # Stanford baseline reference (Irvin et al. 2019, ensemble)
+    # Stanford baseline reference
+    # Original 5 CheXpert competition labels: Irvin et al. 2019, Table 2 (ensemble)
+    # Pneumothorax: CheXpert paper Table S1 (Stanford ensemble ~0.943)
+    # Fracture: not available in official val set (0 positives)
     stanford = {
-        "Atelectasis": 0.858, "Cardiomegaly": 0.832,
-        "Consolidation": 0.899, "Edema": 0.924, "Pleural Effusion": 0.968,
+        "Atelectasis":      0.858,
+        "Cardiomegaly":     0.832,
+        "Consolidation":    0.899,
+        "Edema":            0.924,
+        "Pleural Effusion": 0.968,
+        "Pneumothorax":     0.943,  # Stanford single-model from Table S1
+        "Fracture":         None,   # no val data available
     }
     print("\n  Comparison to Stanford DenseNet121 Ensemble (paper):")
     print(f"  {'Label':25s}  {'Ours':>6}  {'Stanford':>8}  {'Gap':>6}")
-    print("-"*55)
+    print("-"*65)
     for label in COMPETITION_LABELS:
         our   = auc_scores.get(label, float('nan'))
-        ref   = stanford.get(label, float('nan'))
-        gap   = our - ref if not (np.isnan(our) or np.isnan(ref)) else float('nan')
-        gap_s = f"{gap:+.4f}" if not np.isnan(gap) else "  n/a"
-        our_s = f"{our:.4f}"  if not np.isnan(our) else "  n/a"
-        print(f"  {label:25s}  {our_s:>6}  {ref:>8.4f}  {gap_s:>6}")
-    print("="*55)
+        our_s = f"{our:.4f}" if not np.isnan(our) else "  n/a"
+        ref   = stanford.get(label, None)
+        if ref is None:
+            print(f"  {label:25s}  {our_s:>6}  {'n/a':>8}  {'n/a':>6}")
+        else:
+            gap   = our - ref if not np.isnan(our) else float('nan')
+            gap_s = f"{gap:+.4f}" if not np.isnan(gap) else "  n/a"
+            print(f"  {label:25s}  {our_s:>6}  {ref:>8.4f}  {gap_s:>6}")
+    print("="*65)
 
     # ── Per-class Accuracy, F1, Precision, Recall (threshold 0.5) ───────
     threshold = 0.5
@@ -210,30 +222,40 @@ def evaluate(
     print(f"\n  Report saved → {report_path}")
 
     # ── ROC Curves ────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 5, figsize=(22, 4))
-    fig.suptitle("ROC Curves — CheXpert Official Validation Set", fontsize=13, y=1.02)
-    colors = ['#e41a1c', '#377eb8', '#4daf4a', '#ff7f00', '#984ea3']
+    n_labels = len(COMPETITION_LABELS)
+    ncols    = min(n_labels, 4)
+    nrows    = (n_labels + ncols - 1) // ncols
+    colors   = ['#e41a1c', '#377eb8', '#4daf4a', '#ff7f00', '#984ea3', '#00ced1', '#ff69b4']
 
-    for i, (label, ax) in enumerate(zip(COMPETITION_LABELS, axes)):
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 5.5, nrows * 4.5))
+    axes = np.array(axes).flatten()
+    fig.suptitle("ROC Curves — CheXpert Official Validation Set", fontsize=13, y=1.01)
+
+    for i, label in enumerate(COMPETITION_LABELS):
+        ax = axes[i]
         y_true  = targets[:, i]
         y_score = preds[:, i]
         if len(np.unique(y_true)) < 2:
-            ax.text(0.5, 0.5, 'single class', ha='center', va='center',
-                    transform=ax.transAxes)
+            ax.text(0.5, 0.5, 'no positives in val set', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=9, color='gray')
         elif np.any(np.isnan(y_score)):
             ax.text(0.5, 0.5, 'NaN in preds', ha='center', va='center',
                     transform=ax.transAxes)
         else:
             fpr, tpr, _ = roc_curve(y_true, y_score)
             auc = auc_scores[label]
-            ax.plot(fpr, tpr, color=colors[i], lw=2,
+            ax.plot(fpr, tpr, color=colors[i % len(colors)], lw=2,
                     label=f"AUC = {auc:.3f}")
             ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.5)
-            ax.fill_between(fpr, tpr, alpha=0.08, color=colors[i])
+            ax.fill_between(fpr, tpr, alpha=0.08, color=colors[i % len(colors)])
             ax.legend(loc='lower right', fontsize=10)
+        specialized = ' ★' if label in ('Pneumothorax', 'Fracture') else ''
         ax.set_xlabel('False Positive Rate'); ax.set_ylabel('True Positive Rate')
-        ax.set_title(label, fontsize=10); ax.set_xlim([0, 1]); ax.set_ylim([0, 1.02])
-        ax.grid(True, alpha=0.3)
+        ax.set_title(f"{label}{specialized}", fontsize=10)
+        ax.set_xlim([0, 1]); ax.set_ylim([0, 1.02]); ax.grid(True, alpha=0.3)
+
+    for j in range(n_labels, len(axes)):
+        axes[j].set_visible(False)
 
     plt.tight_layout()
     roc_path = os.path.join(save_dir, 'roc_curves.png')
@@ -242,43 +264,51 @@ def evaluate(
     print(f"  ROC curves saved → {roc_path}")
 
     # ── Precision-Recall Curves ───────────────────────────────────────────
-    fig, axes = plt.subplots(1, 5, figsize=(22, 4))
-    fig.suptitle("Precision-Recall Curves — CheXpert Official Validation Set",
-                 fontsize=13, y=1.02)
+    fig2, axes2 = plt.subplots(nrows, ncols, figsize=(ncols * 5.5, nrows * 4.5))
+    axes2 = np.array(axes2).flatten()
+    fig2.suptitle("Precision-Recall Curves — CheXpert Official Validation Set",
+                  fontsize=13, y=1.01)
 
-    for i, (label, ax) in enumerate(zip(COMPETITION_LABELS, axes)):
+    for i, label in enumerate(COMPETITION_LABELS):
+        ax = axes2[i]
         y_true  = targets[:, i]
         y_score = preds[:, i]
         if len(np.unique(y_true)) < 2:
-            ax.text(0.5, 0.5, 'single class', ha='center', va='center',
-                    transform=ax.transAxes)
+            ax.text(0.5, 0.5, 'no positives in val set', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=9, color='gray')
         elif np.any(np.isnan(y_score)):
             ax.text(0.5, 0.5, 'NaN in preds', ha='center', va='center',
                     transform=ax.transAxes)
         else:
             prec, rec, _ = precision_recall_curve(y_true, y_score)
             ap = average_precision_score(y_true, y_score)
-            ax.plot(rec, prec, color=colors[i], lw=2, label=f"AP = {ap:.3f}")
+            ax.plot(rec, prec, color=colors[i % len(colors)], lw=2, label=f"AP = {ap:.3f}")
             base = y_true.mean()
             ax.axhline(y=base, color='k', linestyle='--', lw=1,
                        alpha=0.5, label=f"Baseline = {base:.3f}")
-            ax.fill_between(rec, prec, alpha=0.08, color=colors[i])
+            ax.fill_between(rec, prec, alpha=0.08, color=colors[i % len(colors)])
             ax.legend(loc='upper right', fontsize=9)
+        specialized = ' ★' if label in ('Pneumothorax', 'Fracture') else ''
         ax.set_xlabel('Recall'); ax.set_ylabel('Precision')
-        ax.set_title(label, fontsize=10); ax.set_xlim([0, 1]); ax.set_ylim([0, 1.02])
-        ax.grid(True, alpha=0.3)
+        ax.set_title(f"{label}{specialized}", fontsize=10)
+        ax.set_xlim([0, 1]); ax.set_ylim([0, 1.02]); ax.grid(True, alpha=0.3)
+
+    for j in range(n_labels, len(axes2)):
+        axes2[j].set_visible(False)
 
     plt.tight_layout()
     pr_path = os.path.join(save_dir, 'precision_recall.png')
-    plt.savefig(pr_path, dpi=150, bbox_inches='tight')
+    fig2.savefig(pr_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  PR curves saved → {pr_path}")
 
     # ── Confusion Matrices (threshold 0.5) ────────────────────────────────
-    fig, axes = plt.subplots(1, 5, figsize=(22, 4))
-    fig.suptitle("Confusion Matrices @ threshold 0.5", fontsize=13, y=1.02)
+    fig3, axes3 = plt.subplots(nrows, ncols, figsize=(ncols * 5, nrows * 4.5))
+    axes3 = np.array(axes3).flatten()
+    fig3.suptitle("Confusion Matrices @ threshold 0.5", fontsize=13, y=1.01)
 
-    for i, (label, ax) in enumerate(zip(COMPETITION_LABELS, axes)):
+    for i, label in enumerate(COMPETITION_LABELS):
+        ax = axes3[i]
         y_true = targets[:, i]
         y_score_clean = np.nan_to_num(preds[:, i], nan=0.5)
         y_pred = (y_score_clean >= 0.5).astype(int)
@@ -286,7 +316,11 @@ def evaluate(
         disp   = ConfusionMatrixDisplay(confusion_matrix=cm,
                                         display_labels=['Neg', 'Pos'])
         disp.plot(ax=ax, colorbar=False, cmap='Blues')
-        ax.set_title(label, fontsize=10)
+        specialized = ' ★' if label in ('Pneumothorax', 'Fracture') else ''
+        ax.set_title(f"{label}{specialized}", fontsize=10)
+
+    for j in range(n_labels, len(axes3)):
+        axes3[j].set_visible(False)
 
     plt.tight_layout()
     cm_path = os.path.join(save_dir, 'confusion_matrices.png')
