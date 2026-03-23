@@ -1,0 +1,71 @@
+{
+  "model_weights": "best_densenet121_phase1.pth",
+  "val_csv": "valid.csv",
+  "num_samples": 234,
+  "threshold": 0.5,
+  "overall": {
+    "mean_auc": 0.8380903842341553,
+    "accuracy": 0.46642246642246643,
+    "f1_score": 0.34678624813153963,
+    "precision": 0.22372227579556414,
+    "recall": 0.770764119601329
+  },
+  "per_class": {
+    "Atelectasis": {
+      "auc": 0.7517045454545455,
+      "accuracy": 0.6324786324786325,
+      "f1_score": 0.57,
+      "precision": 0.475,
+      "recall": 0.7125,
+      "avg_precision": 0.6125702091311985
+    },
+    "Cardiomegaly": {
+      "auc": 0.7381289865343728,
+      "accuracy": 0.7222222222222222,
+      "f1_score": 0.5695364238410596,
+      "precision": 0.5180722891566265,
+      "recall": 0.6323529411764706,
+      "avg_precision": 0.6590887574989308
+    },
+    "Consolidation": {
+      "auc": 0.868083823307704,
+      "accuracy": 0.15384615384615385,
+      "f1_score": 0.25,
+      "precision": 0.14285714285714285,
+      "recall": 1.0,
+      "avg_precision": 0.4803786235921348
+    },
+    "Edema": {
+      "auc": 0.9202821869488537,
+      "accuracy": 0.8632478632478633,
+      "f1_score": 0.7090909090909091,
+      "precision": 0.6,
+      "recall": 0.8666666666666667,
+      "avg_precision": 0.769425809793611
+    },
+    "Pleural Effusion": {
+      "auc": 0.8952542675842345,
+      "accuracy": 0.8247863247863247,
+      "f1_score": 0.7172413793103448,
+      "precision": 0.6666666666666666,
+      "recall": 0.7761194029850746,
+      "avg_precision": 0.80228941102118
+    },
+    "Pneumothorax": {
+      "auc": 0.8550884955752212,
+      "accuracy": 0.06837606837606838,
+      "f1_score": 0.06837606837606838,
+      "precision": 0.035398230088495575,
+      "recall": 1.0,
+      "avg_precision": 0.24681650495006657
+    },
+    "Fracture": {
+      "auc": null,
+      "accuracy": 0.0,
+      "f1_score": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "avg_precision": 0.0
+    }
+  }
+}

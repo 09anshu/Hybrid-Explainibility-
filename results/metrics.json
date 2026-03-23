@@ -1,55 +1,71 @@
 {
-  "model_weights": "best_densenet121_phase1.pth",
+  "model_weights": "best_densenet121_phase1_stopped_best_20260317.pth",
   "val_csv": "valid.csv",
   "num_samples": 234,
   "threshold": 0.5,
   "overall": {
-    "mean_auc": 0.8273092871125935,
-    "accuracy": 0.7341880341880341,
-    "f1_score": 0.5923984272608126,
-    "precision": 0.4808510638297872,
-    "recall": 0.7713310580204779
+    "mean_auc": 0.8380903842341553,
+    "accuracy": 0.46642246642246643,
+    "f1_score": 0.34678624813153963,
+    "precision": 0.22372227579556414,
+    "recall": 0.770764119601329
   },
   "per_class": {
     "Atelectasis": {
-      "auc": 0.7504058441558441,
-      "accuracy": 0.6410256410256411,
-      "f1_score": 0.5922330097087378,
-      "precision": 0.48412698412698413,
-      "recall": 0.7625,
-      "avg_precision": 0.5933202114783771
+      "auc": 0.7517045454545455,
+      "accuracy": 0.6324786324786325,
+      "f1_score": 0.57,
+      "precision": 0.475,
+      "recall": 0.7125,
+      "avg_precision": 0.6125702091311985
     },
     "Cardiomegaly": {
-      "auc": 0.7502657689581858,
-      "accuracy": 0.717948717948718,
-      "f1_score": 0.5714285714285714,
-      "precision": 0.5116279069767442,
-      "recall": 0.6470588235294118,
-      "avg_precision": 0.6923268618870493
+      "auc": 0.7381289865343728,
+      "accuracy": 0.7222222222222222,
+      "f1_score": 0.5695364238410596,
+      "precision": 0.5180722891566265,
+      "recall": 0.6323529411764706,
+      "avg_precision": 0.6590887574989308
     },
     "Consolidation": {
-      "auc": 0.8392884064525855,
-      "accuracy": 0.6837606837606838,
-      "f1_score": 0.4393939393939394,
-      "precision": 0.29292929292929293,
-      "recall": 0.8787878787878788,
-      "avg_precision": 0.4072647231035117
+      "auc": 0.868083823307704,
+      "accuracy": 0.15384615384615385,
+      "f1_score": 0.25,
+      "precision": 0.14285714285714285,
+      "recall": 1.0,
+      "avg_precision": 0.4803786235921348
     },
     "Edema": {
-      "auc": 0.9381540270429158,
+      "auc": 0.9202821869488537,
       "accuracy": 0.8632478632478633,
-      "f1_score": 0.6981132075471698,
-      "precision": 0.6065573770491803,
-      "recall": 0.8222222222222222,
-      "avg_precision": 0.7833178179938896
+      "f1_score": 0.7090909090909091,
+      "precision": 0.6,
+      "recall": 0.8666666666666667,
+      "avg_precision": 0.769425809793611
     },
     "Pleural Effusion": {
-      "auc": 0.8584323889534364,
-      "accuracy": 0.7649572649572649,
-      "f1_score": 0.6666666666666666,
-      "precision": 0.5612244897959183,
-      "recall": 0.8208955223880597,
-      "avg_precision": 0.7161964839770256
+      "auc": 0.8952542675842345,
+      "accuracy": 0.8247863247863247,
+      "f1_score": 0.7172413793103448,
+      "precision": 0.6666666666666666,
+      "recall": 0.7761194029850746,
+      "avg_precision": 0.80228941102118
+    },
+    "Pneumothorax": {
+      "auc": 0.8550884955752212,
+      "accuracy": 0.06837606837606838,
+      "f1_score": 0.06837606837606838,
+      "precision": 0.035398230088495575,
+      "recall": 1.0,
+      "avg_precision": 0.24681650495006657
+    },
+    "Fracture": {
+      "auc": null,
+      "accuracy": 0.0,
+      "f1_score": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "avg_precision": 0.0
     }
   }
 }

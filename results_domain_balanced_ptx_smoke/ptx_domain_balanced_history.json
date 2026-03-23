@@ -1,0 +1,26 @@
+{
+  "epoch": [
+    1
+  ],
+  "train_loss": [
+    0.323722
+  ],
+  "chex_val_loss": [
+    0.554049
+  ],
+  "chex_val_auc": [
+    0.834071
+  ],
+  "siim_val_loss": [
+    0.014731
+  ],
+  "siim_val_auc": [
+    1.0
+  ],
+  "blended_score": [
+    0.88385
+  ],
+  "lr": [
+    5e-07
+  ]
+}

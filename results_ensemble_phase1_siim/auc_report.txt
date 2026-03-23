@@ -1,0 +1,19 @@
+Model weights : best_densenet121_phase1.pth, best_densenet121_pneumothorax_siim.pth
+Val set       : valid.csv  (234 samples)
+
+Label                         AUC     Acc      F1    Prec     Rec
+---------------------------------------------------------------------------
+Atelectasis                0.6838  0.3932  0.5203  0.3565  0.9625
+Cardiomegaly               0.7410  0.7094  0.0000  0.0000  0.0000
+Consolidation              0.7838  0.1410  0.2472  0.1410  1.0000
+Edema                      0.8246  0.8162  0.0851  1.0000  0.0444
+Pleural Effusion           0.6931  0.2863  0.4452  0.2863  1.0000
+Pneumothorax               0.7857  0.0342  0.0661  0.0342  1.0000
+Fracture                      n/a  0.0000  0.0000  0.0000  0.0000
+---------------------------------------------------------------------------
+
+Mean AUC                   0.7520
+Overall Accuracy           0.3400
+Overall F1 Score           0.2570
+Overall Precision          0.1620
+Overall Recall             0.6213
